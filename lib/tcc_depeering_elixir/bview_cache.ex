@@ -17,15 +17,29 @@ defmodule TccDepeeringElixir.BViewCache do
   """ 
   def parse_or_cache(file_path, rrc, opts \\ []) do
     ip_version = opts[:ip_version] || "v4"
-    IO.puts("Checking cache for #{file_path} (RRC: #{rrc}, IP Version: #{ip_version})")
-    case check_cache(file_path, rrc, ip_version) do
+    event_id = opts[:event_id]
+    origin_asn = opts[:origin_asn]
+    
+    IO.puts("Checking cache for #{file_path} (RRC: #{rrc}, IP Version: #{ip_version}, origin_asn: #{origin_asn})")
+    case check_cache(file_path, rrc, origin_asn, ip_version) do
       {:hit, result} ->
         {:ok, result, cached: true}
 
       :miss ->
+        # Update event to parsing state if we have an event ID
+        if event_id do
+          TccDepeeringElixir.BViewEventPersistence.update_event_state(event_id, "parsing")
+        end
+        
         case TccDepeeringElixir.BViewParser.parse_file(file_path, opts) do
           {:ok, result} ->
-            store_cache(file_path, result, rrc, ip_version)
+            store_cache(file_path, result, rrc, origin_asn, ip_version)
+            
+            # Complete the event when parsing finishes
+            if event_id do
+              TccDepeeringElixir.BViewEventPersistence.complete_event(event_id)
+            end
+            
             {:ok, result, cached: false}
 
           {:error, reason} -> 
@@ -46,8 +60,8 @@ defmodule TccDepeeringElixir.BViewCache do
   @doc """
   Clear cache for a specific file.
   """
-  def clear(file_path, rrc, ip_version) do
-    cache_file = get_cache_file_path(file_path, rrc, ip_version)
+  def clear(file_path, rrc, origin_asn, ip_version) do
+    cache_file = get_cache_file_path(file_path, rrc, origin_asn, ip_version)
     File.rm(cache_file)
   end
 
@@ -69,8 +83,8 @@ defmodule TccDepeeringElixir.BViewCache do
     end
   end
 
-  defp check_cache(file_path, rrc, ip_version) do
-    cache_file = get_cache_file_path(file_path, rrc, ip_version)
+  defp check_cache(file_path, rrc, origin_asn, ip_version) do
+    cache_file = get_cache_file_path(file_path, rrc, origin_asn, ip_version)
     IO.puts("Looking for cache file: #{cache_file}")
     case File.read(cache_file) do
       {:ok, json_content} ->
@@ -121,7 +135,7 @@ defmodule TccDepeeringElixir.BViewCache do
         end
 
       {:error, _} ->
-        IO.puts("Cache miss for #{file_path} (RRC: #{rrc})")
+        IO.puts("Cache miss for #{file_path} (RRC: #{rrc}, IP Version: #{ip_version}, origin_asn: #{origin_asn})")
         # Cache file doesn't exist
         :miss
     end
@@ -129,11 +143,11 @@ defmodule TccDepeeringElixir.BViewCache do
 
 
 
-  defp store_cache(file_path, result, rrc, ip_version) do
-    IO.puts("Storing cache for #{file_path} (RRC: #{rrc}, IP Version: #{ip_version})")
+  defp store_cache(file_path, result, rrc, origin_asn, ip_version) do
+    IO.puts("Storing cache for #{file_path} (RRC: #{rrc}, IP Version: #{ip_version}, origin_asn: #{origin_asn})")
     case File.stat(file_path) do
       {:ok, %File.Stat{mtime: mtime}} ->
-        persist_cache_to_disk(file_path, mtime, result, rrc, ip_version)
+        persist_cache_to_disk(file_path, mtime, result, rrc, origin_asn, ip_version)
 
       {:error, _} ->
         # Don't cache if we can't stat the file
@@ -141,10 +155,15 @@ defmodule TccDepeeringElixir.BViewCache do
     end
   end
   
-  def get_cache_file_path(date_str, time_str, rrc, ip_version) do
-    "#{@cache_dir}/#{rrc}/#{ip_version}/bview_cache.#{date_str}.#{time_str}.json"
+  def get_cache_file_path(date_str, time_str, rrc, origin_asn, ip_version) do
+    if origin_asn do
+      "#{@cache_dir}/#{rrc}/#{ip_version}/#{origin_asn}/bview_cache.#{date_str}.#{time_str}.json"
+    else
+      "#{@cache_dir}/#{rrc}/#{ip_version}/bview_cache.#{date_str}.#{time_str}.json"
+    end
   end
-  def get_cache_file_path(file_path, rrc, ip_version) do
+  
+  def get_cache_file_path(file_path, rrc, origin_asn, ip_version) do
     # Extract date and time from path like "data/rrc15/output_bview.20260101.0000.txt"
     case Path.basename(file_path) do
       "output_bview." <> rest ->
@@ -153,25 +172,35 @@ defmodule TccDepeeringElixir.BViewCache do
         case parts do
           [date_str, time_str, "txt"] ->
             
-            get_cache_file_path(date_str, time_str, rrc, ip_version)
+            get_cache_file_path(date_str, time_str, rrc, origin_asn, ip_version)
           _ ->
-            # Fallback for unexpected formats
-            "#{@cache_dir}/#{rrc}/#{ip_version}/bview_cache.#{:erlang.system_time(:millisecond)}.json"
+            if origin_asn do
+              "#{@cache_dir}/#{rrc}/#{ip_version}/#{origin_asn}/bview_cache.#{:erlang.system_time(:millisecond)}.json"
+            else
+              "#{@cache_dir}/#{rrc}/#{ip_version}/bview_cache.#{:erlang.system_time(:millisecond)}.json"
+            end
         end
 
       _ -> 
         # Fallback for unexpected file names
-        "#{@cache_dir}/#{rrc}/#{ip_version}/bview_cache.#{:erlang.system_time(:millisecond)}.json"
+        if origin_asn do
+          "#{@cache_dir}/#{rrc}/#{ip_version}/#{origin_asn}/bview_cache.#{:erlang.system_time(:millisecond)}.json"
+        else
+          "#{@cache_dir}/#{rrc}/#{ip_version}/bview_cache.#{:erlang.system_time(:millisecond)}.json"
+        end
     end 
   end
 
   # Persist cache for specific file to JSON
-  defp persist_cache_to_disk(file_path, mtime, result, rrc, ip_version) do
+  defp persist_cache_to_disk(file_path, mtime, result, rrc, origin_asn, ip_version) do
     try do
       File.mkdir_p(@cache_dir)
       File.mkdir_p(@cache_dir <> "/" <> rrc)
       File.mkdir_p(@cache_dir <> "/" <> rrc <> "/" <> ip_version)
-      cache_file = get_cache_file_path(file_path, rrc, ip_version)
+      if origin_asn do
+        File.mkdir_p(@cache_dir <> "/" <> rrc <> "/" <> ip_version <> "/" <> origin_asn)
+      end
+      cache_file = get_cache_file_path(file_path, rrc, origin_asn, ip_version)
       IO.puts("Persisting cache to disk at #{cache_file}")
 
       %{members: members, reachables: reachables, mapping: mapping} = result
@@ -185,13 +214,202 @@ defmodule TccDepeeringElixir.BViewCache do
         "mapping" =>
           Map.new(mapping, fn {member_as, reachables_set} ->
             {to_string(member_as), MapSet.to_list(reachables_set)}
-          end)
+          end),
+          #"prefix_mapping" => Map.new(result.prefix_mapping, fn {member_as, prefixes_set} -> {to_string(member_as), MapSet.to_list(prefixes_set)} end)
       }
 
       File.write!(cache_file, Jason.encode!(cache_entry, pretty: true))
     rescue
       e ->
         IO.warn("Failed to persist cache to disk: #{inspect(e)}")
+    end
+  end
+
+
+  def erase_invalid_dates do
+    IO.puts("Starting validation of all bview files...")
+    data_dir = "data"
+    
+    case File.dir?(data_dir) do
+      true ->
+        txt_files = find_txt_files(data_dir)
+        IO.puts("Found #{Enum.count(txt_files)} .txt files to validate")
+        Enum.each(txt_files, &check_and_erase_if_invalid/1)
+        IO.puts("Validation complete")
+        
+        # Wrap the success in the expected tuple format
+        {:ok, "Validation complete. Checked #{Enum.count(txt_files)} files."}
+      
+      false ->
+        IO.warn("Data directory not found: #{data_dir}")
+        
+        # Return an error tuple so the controller can handle the failure gracefully
+        {:error, "Data directory not found"}
+    end
+  end 
+
+  # Recursively find all .txt files in a directory
+  defp find_txt_files(dir) do
+    case File.ls(dir) do
+      {:ok, files} ->
+        Enum.flat_map(files, fn file ->
+          path = Path.join(dir, file)
+          case File.dir?(path) do
+            true -> find_txt_files(path)
+            false ->
+              if String.ends_with?(file, ".txt") do
+                [path]
+              else
+                []
+              end
+          end
+        end)
+      {:error, _} ->
+        []
+    end
+  end
+
+  defp check_and_erase_if_invalid(file_path) do
+    case parse_file_path(file_path) do
+      {:ok, %{date_str: date_str, time_str: time_str, rrc: rrc}} ->
+        case read_first_line(file_path) do
+          {:ok, first_line} ->
+            case extract_timestamp(first_line) do
+              {:ok, timestamp} ->
+                if is_date_invalid?(date_str, timestamp) do
+                  IO.puts("Invalid date detected in #{file_path}")
+                  erase_invalid_file_set(file_path, date_str, time_str, rrc)
+                end
+              {:error, _} ->
+                :ok
+            end
+          {:error, _} ->
+            :ok
+        end
+      {:error, _} ->
+        :ok
+    end
+  end
+
+  defp parse_file_path(file_path) do
+    case Path.basename(file_path) do
+      "output_bview." <> rest ->
+        parts = String.split(rest, ".")
+        case parts do
+          [date_str, time_str, "txt"] ->
+            path_parts = String.split(file_path, "/")
+            case path_parts do
+              ["data", rrc | _] ->
+                {:ok, %{date_str: date_str, time_str: time_str, rrc: rrc}}
+              _ ->
+                {:error, "Invalid path structure"}
+            end
+          _ ->
+            {:error, "Invalid filename format"}
+        end
+      _ ->
+        {:error, "Not an output_bview file"}
+    end
+  end
+
+  defp read_first_line(file_path) do
+    case File.read(file_path) do
+      {:ok, content} ->
+        case String.split(content, "\n") do
+          [first_line | _] ->
+            {:ok, String.trim(first_line)}
+          [] ->
+            {:error, "Empty file"}
+        end
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp extract_timestamp(line) do
+    # Format: TABLE_DUMP2|1740787200|B|...
+    case String.split(line, "|") do
+      [_header, timestamp_str | _] ->
+        case Integer.parse(timestamp_str) do
+          {timestamp, _} ->
+            {:ok, timestamp}
+          :error ->
+            {:error, "Invalid timestamp"}
+        end
+      _ ->
+        {:error, "Invalid line format"}
+    end
+  end
+
+  defp is_date_invalid?(date_str, timestamp) do
+    case parse_date_string(date_str) do
+      {:ok, filename_date} ->
+        case unix_timestamp_to_date(timestamp) do
+          {:ok, timestamp_date} ->
+            diff = Date.diff(timestamp_date, filename_date)
+            abs(diff) >= 7
+          {:error, _} ->
+            false
+        end
+      {:error, _} ->
+        false
+    end
+  end
+
+  defp parse_date_string(date_str) when byte_size(date_str) == 8 do
+    year_str = String.slice(date_str, 0..3)
+    month_str = String.slice(date_str, 4..5)
+    day_str = String.slice(date_str, 6..7)
+    
+    with {year, ""} <- Integer.parse(year_str),
+         {month, ""} <- Integer.parse(month_str),
+         {day, ""} <- Integer.parse(day_str),
+         {:ok, date} <- Date.new(year, month, day) do
+      {:ok, date}
+    else
+      _ -> {:error, "Invalid date format"}
+    end
+  end
+
+  defp parse_date_string(_), do: {:error, "Invalid date format"}
+
+  defp unix_timestamp_to_date(timestamp) do
+    case DateTime.from_unix(timestamp) do
+      {:ok, dt} ->
+        {:ok, DateTime.to_date(dt)}
+      :error ->
+        {:error, "Invalid timestamp"}
+    end
+  end
+
+  defp erase_invalid_file_set(txt_file_path, date_str, time_str, rrc) do
+    # Delete the .txt file
+    case File.rm(txt_file_path) do
+      :ok -> IO.puts("  Deleted: #{txt_file_path}")
+      {:error, reason} -> IO.warn("  Failed to delete #{txt_file_path}: #{inspect(reason)}")
+    end
+    
+    # Delete the .gz file: data/rrc/bview.20250301.0000.gz
+    gz_file = "data/#{rrc}/bview.#{date_str}.#{time_str}.gz"
+    case File.rm(gz_file) do
+      :ok -> IO.puts("  Deleted: #{gz_file}")
+      {:error, :enoent} -> :ok  # File doesn't exist, that's fine
+      {:error, reason} -> IO.warn("  Failed to delete #{gz_file}: #{inspect(reason)}")
+    end
+    
+    # Delete cache files if they exist
+    cache_v4 = "data/cache/#{rrc}/v4/bview_cache.#{date_str}.#{time_str}.json"
+    case File.rm(cache_v4) do
+      :ok -> IO.puts("  Deleted: #{cache_v4}")
+      {:error, :enoent} -> :ok  # File doesn't exist, that's fine
+      {:error, reason} -> IO.warn("  Failed to delete #{cache_v4}: #{inspect(reason)}")
+    end
+    
+    cache_v6 = "data/cache/#{rrc}/v6/bview_cache.#{date_str}.#{time_str}.json"
+    case File.rm(cache_v6) do
+      :ok -> IO.puts("  Deleted: #{cache_v6}")
+      {:error, :enoent} -> :ok  # File doesn't exist, that's fine
+      {:error, reason} -> IO.warn("  Failed to delete #{cache_v6}: #{inspect(reason)}")
     end
   end
  

@@ -8,7 +8,9 @@ To start your Phoenix server:
 Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
 
  
-
+You can run: ./reset.sh 
+To run all the commands necessary to run this locally.
+To start the server:
 mix phx.server
 You might have some issues where it doesn't actually stop running on the port. When that happens, you can make it stop running with:
 fuser -k 4000/tcp

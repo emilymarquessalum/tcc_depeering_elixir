@@ -1,73 +1,59 @@
 defmodule TccDepeeringElixir.BViewParser do
   @moduledoc """
-  Parses bgpdump TABLE_DUMP2 output and extracts:
-  - Unique members (first AS in path)
-  - Unique reachables (prefixes)
-  - Mapping of member AS to reachable prefixes
+  Parses bgpdump TABLE_DUMP2 output and extracts data optimally.
   """
 
-  @doc """
-  Parses a bgpdump output file and returns analysis results.
-
-  Options:
-    - `:limit` - Maximum number of lines to read (default: :infinity for all lines)
-
-  Returns:
-    {:ok, %{
-      members: MapSet of member ASes,
-      reachables: MapSet of reachable prefixes,
-      mapping: %{member_as => MapSet of reachables}
-    }}
-
-    {:error, reason} if file cannot be read
-  """
   def parse_file(file_path, opts \\ []) do
     limit = Keyword.get(opts, :limit, :infinity)
 
     try do
-      accumulator = {MapSet.new(), MapSet.new(), %{}}
+      IO.inspect("Starting parse for #{file_path}", label: "DEBUG")
+      accumulator = {MapSet.new(), MapSet.new(), MapSet.new(), %{}}
 
+       
       result =
-        File.stream!(file_path)
+        file_path
+        |> File.stream!(read_ahead: 100_000)  
         |> stream_limit(limit)
-        |> Stream.map(&String.trim/1)
-        |> Stream.filter(&(String.length(&1) > 0))
         |> Enum.reduce(accumulator, &parse_line/2)
 
-      {members, reachables, mapping} = result
+      {members, reachables, transit_ases, mapping} = result
 
       {:ok,
        %{
          members: members,
          reachables: reachables,
+         transit_ases: transit_ases,
          mapping: mapping
        }}
     rescue
-      e -> {:error, "Failed to parse file: #{inspect(e)}"}
+      e ->
+        IO.inspect(e, label: "ERROR in parse_file")
+        {:error, "Failed to parse file: #{inspect(e)}"}
     end
   end
 
-  @doc """
-  Get statistics about the parsed data.
-  """
+  # currently unused but could be helpful in the future.
   def stats(result) do
     %{
       members: members,
-      reachables: reachables,
+      reachables: reachables, 
+      transit_ases: transit_ases,
       mapping: mapping
     } = result
-
+ 
     total_announcements =
-      mapping
-      |> Map.values()
-      |> Enum.map(&MapSet.size/1)
-      |> Enum.sum()
+      Enum.reduce(mapping, 0, fn {_as, reachables_set}, acc -> 
+        acc + MapSet.size(reachables_set)
+      end)
  
     %{
       unique_members_count: MapSet.size(members),
       unique_reachables_count: MapSet.size(reachables),
+      unique_transit_ases_count: MapSet.size(transit_ases),
       total_member_mappings: map_size(mapping),
       total_announcements: total_announcements,
+      
       top_members:
         mapping
         |> Enum.sort_by(fn {_as, reachables_set} -> MapSet.size(reachables_set) end, :desc)
@@ -81,43 +67,65 @@ defmodule TccDepeeringElixir.BViewParser do
   defp stream_limit(stream, :infinity), do: stream
   defp stream_limit(stream, limit), do: Stream.take(stream, limit)
 
-  defp parse_line(line, {members, reachables, mapping}) do
-    fields = String.split(line, "|")
+  defp parse_line(line, acc) do
+    
+    case String.trim_trailing(line) do
+      "" -> acc
+      trimmed_line -> process_fields(String.split(trimmed_line, "|"), acc)
+    end
+  end
 
-    if length(fields) >= 9 do
-      prefix = Enum.at(fields, 5)
-      as_path_str = Enum.at(fields, 6)
-     
+ 
+  defp process_fields([_, _, _, _, ixp_asn_str, prefix, as_path_str, _, communities | _], {members, reachables, transit_ases, mapping}) do
+    ixp_asn = parse_asn(ixp_asn_str)
+ 
+    as_path_str
+    |> String.split(" ", trim: true)
+    |> process_as_path(ixp_asn, [], nil)
+    |> case do
+      {[], _} -> 
+        {members, reachables, transit_ases, mapping}
 
-      as_path =
-        as_path_str
-        |> String.split()
-        |> Enum.map(&parse_asn/1)
-        |> Enum.reject(&is_nil/1)
+      {as_path, reachable} ->
+        [member_as | _] = as_path
+        
+        new_members = MapSet.put(members, member_as)
 
-      # I still want to map that
-      #if length(as_path) == 1 do
-      #  No member->reachable
-      #  {members, reachables, mapping}
-      
-      reachable = List.last(as_path)
-      case as_path do
-        [member_as | _] -> # get the first item and do with it...
-          new_members = MapSet.put(members, member_as)
-          new_reachables = MapSet.put(reachables, reachable)
+        {new_reachables, new_transit_ases} =
+          if member_as == reachable do
+            {reachables, MapSet.put(transit_ases, member_as)}
+          else
+            {MapSet.put(reachables, reachable), transit_ases}
+          end
 
-          new_mapping =
-            Map.update(mapping, member_as, MapSet.new([reachable]), fn reachables_set ->
-              MapSet.put(reachables_set, reachable)
-            end)
+        reachable_entry = %{
+          reachable: reachable, 
+          as_path: as_path,
+          prefix: prefix,
+          communities: communities
+        }  
 
-          {new_members, new_reachables, new_mapping}
+        new_mapping =
+          Map.update(mapping, member_as, MapSet.new([reachable_entry]), fn reachables_set ->
+            MapSet.put(reachables_set, reachable_entry)
+          end)
 
-        [] ->
-          {members, reachables, mapping}
-      end
-    else
-      {members, reachables, mapping}
+        {new_members, new_reachables, new_transit_ases, new_mapping}
+    end
+  end
+
+  # Fallback for malformed lines (less than 9 elements)
+  defp process_fields(_, acc), do: acc 
+
+  # Custom single-pass AS Path processor to replace List.last + Enum.filter + Enum.map
+  defp process_as_path([], _ixp_asn, [], _last_valid), do: {[], nil}
+  defp process_as_path([], _ixp_asn, acc, last_valid), do: {Enum.reverse(acc), last_valid}
+  defp process_as_path([raw_asn | rest], ixp_asn, acc, last_valid) do
+    case Integer.parse(raw_asn) do
+      {asn, ""} when asn != ixp_asn -> 
+        process_as_path(rest, ixp_asn, [asn | acc], asn)
+      _ -> 
+        process_as_path(rest, ixp_asn, acc, last_valid)
     end
   end
 

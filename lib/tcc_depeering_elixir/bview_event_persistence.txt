@@ -1,0 +1,20 @@
+
+ @doc """
+    case File.read(@events_file) do
+      
+      {:ok, content} ->
+        case Jason.decode(content) do
+          {:ok, events} when is_list(events) ->
+            events
+          _ ->
+            []
+        end
+      {:error, :enoent} ->
+        []
+      {:error, reason} ->
+        Logger.warning('Failed to read events file: #{inspect(reason)}')
+        []
+    end
+    
+  end
+  """
