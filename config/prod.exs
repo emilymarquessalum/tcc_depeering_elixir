@@ -6,7 +6,8 @@ import Config
 # which you should run after static files are built and
 # before starting your production server.
 config :tcc_depeering_elixir, TccDepeeringElixirWeb.Endpoint,
-  cache_static_manifest: "priv/static/cache_manifest.json"
+  cache_static_manifest: "priv/static/cache_manifest.json" ,
+  server: true
 
 # Force using SSL in production. This also sets the "strict-security-transport" header,
 # known as HSTS. If you have a health check endpoint, you may want to exclude it below.
@@ -16,7 +17,8 @@ config :tcc_depeering_elixir, TccDepeeringElixirWeb.Endpoint,
   exclude: [
     # paths: ["/health"],
     hosts: ["localhost", "127.0.0.1"]
-  ]
+  ],
+  server: true
 
 # Configure Swoosh API Client
 config :swoosh, api_client: Swoosh.ApiClient.Req
