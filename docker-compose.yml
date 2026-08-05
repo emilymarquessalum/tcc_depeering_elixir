@@ -8,9 +8,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: tcc_depeering_elixir_prod
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: tcc_depeering_elixir_prod 
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
