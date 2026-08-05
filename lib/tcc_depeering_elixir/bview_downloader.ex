@@ -243,7 +243,9 @@ defmodule TccDepeeringElixir.BViewDownloader do
       
       IO.puts("Processing with command: #{command}")
       
-      case System.cmd("sh", ["-c", command], stderr_to_stdout: true) do
+      sh_path = System.find_executable("sh") || "C:/Program Files/Git/bin/sh.exe" 
+
+      case System.cmd(sh_path, ["-c", command], stderr_to_stdout: true) do
         {_output, exit_code} when exit_code in [0, 1] ->
           if exit_code == 1 do
             IO.puts("bgpdump finished. fgrep returned exit code 1: No matching data found. Creating empty text file.")

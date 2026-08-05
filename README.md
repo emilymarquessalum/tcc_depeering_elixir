@@ -7,7 +7,14 @@ To start your Phoenix server:
 
 Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
 
- 
+## Installing Elixir
+https://www.erlang.org/downloads.html
+https://elixir-lang.org/install/
+
+Dont forget to install bgpdump
+
+## Running shortcuts 
+
 You can run: ./reset.sh 
 To run all the commands necessary to run this locally.
 To start the server:
@@ -20,12 +27,4 @@ sudo -u postgres /usr/local/pgsql/bin/pg_ctl start -D /usr/local/pgsql/data -l /
 
 tip for closing postgres:
 sudo -u postgres /usr/local/pgsql/bin/pg_ctl stop -D /usr/local/pgsql/data -m fast
-
-## Learn more
-
-start
-* Official website: https://www.phoenixframework.org/
-* Guides: https://hexdocs.pm/phoenix/overview.html
-* Docs: https://hexdocs.pm/phoenix
-* Forum: https://elixirforum.com/c/phoenix-forum
-* Source: https://github.com/phoenixframework/phoenix
+ 
