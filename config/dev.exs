@@ -2,13 +2,14 @@ import Config
 
 # Configure your database
 config :tcc_depeering_elixir, TccDepeeringElixir.Repo,
-  username: "postgres",
-  password: "postgres",
+ username: "postgres_elixir",
+  password: "postgres_elixir213",
   hostname: "localhost",
+  port: 5433,
   database: "tcc_depeering_elixir_dev",
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
-  pool_size: 10
+  pool_size: 10 
 
 # For development, we disable any cache and enable
 # debugging and code reloading.

@@ -26,8 +26,8 @@ config :tcc_depeering_elixir, TccDepeeringElixirWeb.Endpoint,
 
 if config_env() == :prod do 
   database_url =
-    System.get_env("DATABASE_URL") ||
-      "ecto://postgres:postgres@localhost:5432/tcc_depeering_elixir"
+    System.get_env("DATABASE_URL") || 
+      "ecto://postgres_elixir:postgres_elixir213@host.docker.internal:5433/tcc_depeering_elixir_dev"
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
