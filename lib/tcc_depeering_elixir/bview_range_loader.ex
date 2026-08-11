@@ -166,7 +166,7 @@ defmodule TccDepeeringElixir.BViewRangeLoader do
   # Check which items have cache files and partition them
   defp partition_by_cache_status(hours_with_days) do
     Enum.partition(hours_with_days, fn {date, hour, rrc, _asn, _prefix, origin_asn, ip_version} ->
-      cache_file = TccDepeeringElixir.BViewCache.get_cache_file_path(date, hour, rrc, origin_asn, ip_version)
+      cache_file = TccDepeeringElixir.BViewFilePaths.cache_json_file(rrc, ip_version, date, hour, origin_asn)
       File.exists?(cache_file)
     end)
   end

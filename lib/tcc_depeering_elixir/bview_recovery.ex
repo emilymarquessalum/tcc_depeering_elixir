@@ -78,6 +78,7 @@ defmodule TccDepeeringElixir.BViewRecovery do
     time_str = event["time_str"]
     prefix = event["prefix"]
     asn = event["asn"]
+    origin_asn = event["origin_asn"]
     ip_version = event["ip_version"]
     
     Logger.info("[BViewRecovery] Resuming download for #{ripe_date} #{time_str}")
@@ -90,6 +91,7 @@ defmodule TccDepeeringElixir.BViewRecovery do
       time_str,
       prefix,
       asn,
+      origin_asn,
       ip_version
     ) do
       {:ok, %{output_file: output_file, cached: _was_cached}} ->
@@ -107,12 +109,13 @@ defmodule TccDepeeringElixir.BViewRecovery do
     event_id = event["id"]
     prefix = event["prefix"]
     rrc = event["rrc"]
+    origin_asn = event["origin_asn"]
     
     # Reconstruct the output file path
     ripe_date = event["ripe_date"]
     time_str = event["time_str"]
     
-    output_file = "data/#{rrc}/#{prefix}/output_bview.#{ripe_date}.#{time_str}.txt"
+    output_file = TccDepeeringElixir.BViewFilePaths.output_txt_file(rrc, prefix, ripe_date, time_str, origin_asn)
     
     if File.exists?(output_file) do
       Logger.info("[BViewRecovery] Resuming parsing for #{output_file}")
@@ -147,12 +150,13 @@ defmodule TccDepeeringElixir.BViewRecovery do
     prefix = event["prefix"]
     rrc = event["rrc"]
     ip_version = event["ip_version"]
+    origin_asn = event["origin_asn"]
     
     # Reconstruct the output file path
     ripe_date = event["ripe_date"]
     time_str = event["time_str"]
     
-    output_file = "data/#{rrc}/#{prefix}/output_bview.#{ripe_date}.#{time_str}.txt"
+    output_file = TccDepeeringElixir.BViewFilePaths.output_txt_file(rrc, prefix, ripe_date, time_str, origin_asn)
     
     if File.exists?(output_file) do
       Logger.info("[BViewRecovery] Resuming parsing from scratch for #{output_file}")

@@ -6,7 +6,7 @@ defmodule TccDepeeringElixir.BViewCache do
   - Separate JSON cache file per date+time (doing it in a single file would make it grow indefinitely) 
   """
 
-  @cache_dir "data/cache"
+  @cache_dir TccDepeeringElixir.BViewFilePaths.cache_dir()
 
   @doc """
   Parse file with caching. Returns cached result if file hasn't changed.
@@ -156,39 +156,19 @@ defmodule TccDepeeringElixir.BViewCache do
   end
   
   def get_cache_file_path(date_str, time_str, rrc, origin_asn, ip_version) do
-    if origin_asn do
-      "#{@cache_dir}/#{rrc}/#{ip_version}/#{origin_asn}/bview_cache.#{date_str}.#{time_str}.json"
-    else
-      "#{@cache_dir}/#{rrc}/#{ip_version}/bview_cache.#{date_str}.#{time_str}.json"
-    end
+    TccDepeeringElixir.BViewFilePaths.cache_json_file(rrc, ip_version, date_str, time_str, origin_asn)
   end
   
   def get_cache_file_path(file_path, rrc, origin_asn, ip_version) do
-    # Extract date and time from path like "data/rrc15/output_bview.20260101.0000.txt"
-    case Path.basename(file_path) do
-      "output_bview." <> rest ->
-        # rest is like "20260101.0000.txt"
-        parts = String.split(rest, ".")
-        case parts do
-          [date_str, time_str, "txt"] ->
-            
-            get_cache_file_path(date_str, time_str, rrc, origin_asn, ip_version)
-          _ ->
-            if origin_asn do
-              "#{@cache_dir}/#{rrc}/#{ip_version}/#{origin_asn}/bview_cache.#{:erlang.system_time(:millisecond)}.json"
-            else
-              "#{@cache_dir}/#{rrc}/#{ip_version}/bview_cache.#{:erlang.system_time(:millisecond)}.json"
-            end
-        end
+    case TccDepeeringElixir.BViewFilePaths.parse_output_txt_file(file_path) do
+      {:ok, %{date_str: date_str, time_str: time_str, origin_asn: parsed_origin_asn}} ->
+        effective_origin_asn = parsed_origin_asn || origin_asn
+        get_cache_file_path(date_str, time_str, rrc, effective_origin_asn, ip_version)
 
-      _ -> 
-        # Fallback for unexpected file names
-        if origin_asn do
-          "#{@cache_dir}/#{rrc}/#{ip_version}/#{origin_asn}/bview_cache.#{:erlang.system_time(:millisecond)}.json"
-        else
-          "#{@cache_dir}/#{rrc}/#{ip_version}/bview_cache.#{:erlang.system_time(:millisecond)}.json"
-        end
-    end 
+      {:error, _} ->
+        timestamp = :erlang.system_time(:millisecond)
+        get_cache_file_path(timestamp, timestamp, rrc, origin_asn, ip_version)
+    end
   end
 
   # Persist cache for specific file to JSON
@@ -197,10 +177,10 @@ defmodule TccDepeeringElixir.BViewCache do
       File.mkdir_p(@cache_dir)
       File.mkdir_p(@cache_dir <> "/" <> rrc)
       File.mkdir_p(@cache_dir <> "/" <> rrc <> "/" <> ip_version)
-      if origin_asn do
-        File.mkdir_p(@cache_dir <> "/" <> rrc <> "/" <> ip_version <> "/" <> origin_asn)
-      end
+
       cache_file = get_cache_file_path(file_path, rrc, origin_asn, ip_version)
+      cache_dir = Path.dirname(cache_file)
+      File.mkdir_p(cache_dir)
       IO.puts("Persisting cache to disk at #{cache_file}")
 
       %{members: members, reachables: reachables, mapping: mapping} = result
@@ -292,22 +272,21 @@ defmodule TccDepeeringElixir.BViewCache do
   end
 
   defp parse_file_path(file_path) do
-    case Path.basename(file_path) do
-      "output_bview." <> rest ->
-        parts = String.split(rest, ".")
-        case parts do
-          [date_str, time_str, "txt"] ->
-            path_parts = String.split(file_path, "/")
-            case path_parts do
-              ["data", rrc | _] ->
-                {:ok, %{date_str: date_str, time_str: time_str, rrc: rrc}}
-              _ ->
-                {:error, "Invalid path structure"}
-            end
+    normalized_path = String.replace(file_path, "\\", "/")
+
+    case TccDepeeringElixir.BViewFilePaths.parse_output_txt_file(normalized_path) do
+      {:ok, %{date_str: date_str, time_str: time_str}} ->
+        path_parts = String.split(normalized_path, "/")
+
+        case path_parts do
+          ["data", rrc | _] ->
+            {:ok, %{date_str: date_str, time_str: time_str, rrc: rrc}}
+
           _ ->
-            {:error, "Invalid filename format"}
+            {:error, "Invalid path structure"}
         end
-      _ ->
+
+      {:error, _} ->
         {:error, "Not an output_bview file"}
     end
   end
@@ -390,7 +369,7 @@ defmodule TccDepeeringElixir.BViewCache do
     end
     
     # Delete the .gz file: data/rrc/bview.20250301.0000.gz
-    gz_file = "data/#{rrc}/bview.#{date_str}.#{time_str}.gz"
+    gz_file = TccDepeeringElixir.BViewFilePaths.gz_file(rrc, date_str, time_str)
     case File.rm(gz_file) do
       :ok -> IO.puts("  Deleted: #{gz_file}")
       {:error, :enoent} -> :ok  # File doesn't exist, that's fine
@@ -398,14 +377,14 @@ defmodule TccDepeeringElixir.BViewCache do
     end
     
     # Delete cache files if they exist
-    cache_v4 = "data/cache/#{rrc}/v4/bview_cache.#{date_str}.#{time_str}.json"
+    cache_v4 = TccDepeeringElixir.BViewFilePaths.cache_json_file(rrc, "v4", date_str, time_str)
     case File.rm(cache_v4) do
       :ok -> IO.puts("  Deleted: #{cache_v4}")
       {:error, :enoent} -> :ok  # File doesn't exist, that's fine
       {:error, reason} -> IO.warn("  Failed to delete #{cache_v4}: #{inspect(reason)}")
     end
     
-    cache_v6 = "data/cache/#{rrc}/v6/bview_cache.#{date_str}.#{time_str}.json"
+    cache_v6 = TccDepeeringElixir.BViewFilePaths.cache_json_file(rrc, "v6", date_str, time_str)
     case File.rm(cache_v6) do
       :ok -> IO.puts("  Deleted: #{cache_v6}")
       {:error, :enoent} -> :ok  # File doesn't exist, that's fine

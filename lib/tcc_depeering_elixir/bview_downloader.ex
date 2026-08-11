@@ -11,14 +11,15 @@ defmodule TccDepeeringElixir.BViewDownloader do
   # exist already then I consider it an error (even then there should be a flag to let it allow it).
 
   def fetch_and_process(rrc, ripe_month_dir, ripe_date, time_str, prefix, asn, origin_asn, ip_version \\ "v4") do
-    folder = "data/#{rrc}"
-    output_file = "#{folder}/#{prefix}/output_bview.#{ripe_date}.#{time_str}.txt"
+    folder = TccDepeeringElixir.BViewFilePaths.collector_dir(rrc)
+    output_folder = TccDepeeringElixir.BViewFilePaths.output_dir(rrc, prefix)
+    output_file = TccDepeeringElixir.BViewFilePaths.output_txt_file(rrc, prefix, ripe_date, time_str, origin_asn)
     
     # Core logic: Routeviews uses .bz2 sources, RIPE uses .gz sources.
     # However, we want our local cached file to ALWAYS be .gz for bgpdump consistency.
     is_ripe = String.starts_with?(rrc, "rrc")
     
-    local_gz_file = "#{folder}/bview.#{ripe_date}.#{time_str}.gz"
+    local_gz_file = TccDepeeringElixir.BViewFilePaths.gz_file(rrc, ripe_date, time_str)
     
     year = String.slice(ripe_date, 0..3)
     month = String.slice(ripe_date, 4..5)
@@ -36,7 +37,7 @@ defmodule TccDepeeringElixir.BViewDownloader do
     )
 
     with :ok <- ensure_folder_exists(folder), 
-         :ok <- ensure_folder_exists(folder <> "/" <> prefix),
+          :ok <- ensure_folder_exists(output_folder),
          file_status <- check_and_prepare_files(local_gz_file, output_file),
          :ok <- maybe_download(file_status, base_url, local_gz_file, is_ripe, event_id),
          :ok <- maybe_process(file_status, local_gz_file, output_file, prefix, asn, origin_asn, event_id) do
