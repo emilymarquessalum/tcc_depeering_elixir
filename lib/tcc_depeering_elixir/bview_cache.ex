@@ -161,9 +161,10 @@ defmodule TccDepeeringElixir.BViewCache do
   
   def get_cache_file_path(file_path, rrc, origin_asn, ip_version) do
     case TccDepeeringElixir.BViewFilePaths.parse_output_txt_file(file_path) do
-      {:ok, %{date_str: date_str, time_str: time_str, origin_asn: parsed_origin_asn}} ->
+      {:ok, %{date_str: date_str, time_str: time_str, ip_version: parsed_ip_version, origin_asn: parsed_origin_asn}} ->
         effective_origin_asn = parsed_origin_asn || origin_asn
-        get_cache_file_path(date_str, time_str, rrc, effective_origin_asn, ip_version)
+        effective_ip_version = parsed_ip_version || ip_version
+        get_cache_file_path(date_str, time_str, rrc, effective_origin_asn, effective_ip_version)
 
       {:error, _} ->
         timestamp = :erlang.system_time(:millisecond)

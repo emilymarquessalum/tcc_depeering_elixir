@@ -209,6 +209,50 @@ defmodule TccDepeeringElixirWeb.BViewController do
     end
   end
 
+  def delete_bview_range(conn, params) do
+    start_date = Map.get(params, "start_date")
+    end_date = Map.get(params, "end_date")
+    
+    if is_nil(start_date) or is_nil(end_date) do
+      conn
+      |> put_status(:bad_request)
+      |> json(%{status: "error", message: "Both start_date and end_date are required"})
+    else
+      rrc = Map.get(params, "rrc", "rrc15")
+      prefix = Map.get(params, "prefix", "")
+      origin_asn = Map.get(params, "origin_asn", nil)
+      ip_version = Map.get(params, "ip_version", "v4")
+      day_delta = Map.get(params, "day_delta", "1") |> parse_int(1)
+      time_delta = Map.get(params, "time_delta", "0") |> parse_int(0)
+      
+      delete_opts = [
+        rrc: rrc,
+        prefix: prefix,
+        origin_asn: origin_asn,
+        ip_version: ip_version,
+        day_delta: day_delta,
+        time_delta: time_delta,
+        # Option to control if the raw downloaded bview .gz file should also be deleted
+        delete_gz: Map.get(params, "delete_gz", "false") in ["true", true]
+      ]
+
+      case TccDepeeringElixir.BViewDeleter.delete_range(start_date, end_date, delete_opts) do
+        {:ok, deleted_summary} ->
+          json(conn, %{
+            status: "success",
+            message: "Deleted files for specified range",
+            deleted_files_count: deleted_summary.count,
+            details: deleted_summary.files
+          })
+
+        {:error, reason} ->
+          conn
+          |> put_status(:unprocessable_entity)
+          |> json(%{status: "error", message: reason})
+      end
+    end
+  end
+
   defp parse_int(str, default) when is_binary(str) do
     case Integer.parse(str) do
       {int, ""} -> int

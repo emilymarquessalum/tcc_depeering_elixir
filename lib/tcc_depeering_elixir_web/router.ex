@@ -18,6 +18,7 @@ defmodule TccDepeeringElixirWeb.Router do
     pipe_through :api
 
     get "/", BViewController, :bview
+    delete "/delete", BViewController, :delete_bview_range
     get "/ixp-ids", BViewController, :load_ixp_ids
     get "/parse-and-cache", BViewController, :parse_and_cache_file
     post "/erase-invalid-dates-bviews", BViewController, :erase_invalid_dates_bviews

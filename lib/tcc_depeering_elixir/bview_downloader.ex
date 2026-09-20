@@ -13,12 +13,10 @@ defmodule TccDepeeringElixir.BViewDownloader do
   def fetch_and_process(rrc, ripe_month_dir, ripe_date, time_str, prefix, asn, origin_asn, ip_version \\ "v4") do
     folder = TccDepeeringElixir.BViewFilePaths.collector_dir(rrc)
     output_folder = TccDepeeringElixir.BViewFilePaths.output_dir(rrc, prefix)
-    output_file = TccDepeeringElixir.BViewFilePaths.output_txt_file(rrc, prefix, ripe_date, time_str, origin_asn)
+    # Updated: Pass ip_version to build unique output file path
+    output_file = TccDepeeringElixir.BViewFilePaths.output_txt_file(rrc, prefix, ripe_date, time_str, origin_asn, ip_version)
     
-    # Core logic: Routeviews uses .bz2 sources, RIPE uses .gz sources.
-    # However, we want our local cached file to ALWAYS be .gz for bgpdump consistency.
     is_ripe = String.starts_with?(rrc, "rrc")
-    
     local_gz_file = TccDepeeringElixir.BViewFilePaths.gz_file(rrc, ripe_date, time_str)
     
     year = String.slice(ripe_date, 0..3)
@@ -26,12 +24,9 @@ defmodule TccDepeeringElixir.BViewDownloader do
     base_url = if is_ripe do
       "https://data.ris.ripe.net/#{rrc}/#{ripe_month_dir}/bview.#{ripe_date}.#{time_str}.gz"
     else
-      # list of available routeviews: https://archive.routeviews.org
-      
       "https://archive.routeviews.org/#{rrc}/bgpdata/#{year}.#{month}/RIBS/rib.#{ripe_date}.#{time_str}.bz2"
     end
      
-    # Start tracking this event
     event_id = TccDepeeringElixir.BViewEventPersistence.start_event(
       rrc, ripe_month_dir, ripe_date, time_str, prefix, asn, origin_asn, ip_version
     )
@@ -40,7 +35,7 @@ defmodule TccDepeeringElixir.BViewDownloader do
           :ok <- ensure_folder_exists(output_folder),
          file_status <- check_and_prepare_files(local_gz_file, output_file),
          :ok <- maybe_download(file_status, base_url, local_gz_file, is_ripe, event_id),
-         :ok <- maybe_process(file_status, local_gz_file, output_file, prefix, asn, origin_asn, event_id) do
+         :ok <- maybe_process(file_status, local_gz_file, output_file, prefix, asn, origin_asn, ip_version, event_id) do
       cached? = file_status == :cached
       {:ok, %{gz_file: local_gz_file, output_file: output_file, cached: cached?, event_id: event_id}}
     else
@@ -65,17 +60,17 @@ defmodule TccDepeeringElixir.BViewDownloader do
     download_file(base_url, local_gz_file, is_ripe)
   end
 
-  defp maybe_process(:cached, _local_gz_file, _output_file, _prefix, _asn, _origin_asn, _event_id) do
+  defp maybe_process(:cached, _local_gz_file, _output_file, _prefix, _asn, _origin_asn, _ip_version, _event_id) do
     IO.puts("Output file already cached, skipping processing.") 
     :ok
   end
-  defp maybe_process(:needs_process, local_gz_file, output_file, prefix, asn, origin_asn, event_id) do
+  defp maybe_process(:needs_process, local_gz_file, output_file, prefix, asn, origin_asn, ip_version, event_id) do
     TccDepeeringElixir.BViewEventPersistence.update_event_state(event_id, "processing")
-    process_bgpdump(local_gz_file, output_file, prefix, asn, origin_asn)
+    process_bgpdump(local_gz_file, output_file, prefix, asn, origin_asn, ip_version)
   end
-  defp maybe_process(:needs_download, local_gz_file, output_file, prefix, asn, origin_asn, event_id) do
+  defp maybe_process(:needs_download, local_gz_file, output_file, prefix, asn, origin_asn, ip_version, event_id) do
     TccDepeeringElixir.BViewEventPersistence.update_event_state(event_id, "processing")
-    process_bgpdump(local_gz_file, output_file, prefix, asn, origin_asn)
+    process_bgpdump(local_gz_file, output_file, prefix, asn, origin_asn, ip_version)
   end
 
   defp ensure_folder_exists(folder) do
@@ -224,23 +219,25 @@ defmodule TccDepeeringElixir.BViewDownloader do
     end
   end
 
-  defp process_bgpdump(gz_file, output_file, prefix, asn, origin_asn) do
+  defp process_bgpdump(gz_file, output_file, prefix, asn, origin_asn, ip_version) do
     temp_file = "#{output_file}.temp"
     
+    # Check field 6 (prefix column) for '.' (v4) or ':' (v6)
+    ip_filter = if ip_version == "v6", do: "$6 ~ /:/", else: "$6 ~ /\\./"
+
     try do
       used_filter = cond do 
         origin_asn && prefix != "" ->
-          "| fgrep --line-buffered \"|#{prefix}|#{asn}|\" | awk -F'|' '$7 ~ / #{origin_asn}$/ || $7 == \"#{origin_asn}\"'"
+          "| fgrep --line-buffered \"|#{prefix}|#{asn}|\" | awk -F'|' '#{ip_filter} && ($7 ~ / #{origin_asn}$/ || $7 == \"#{origin_asn}\")'"
  
         origin_asn ->
-          "| awk -F'|' '$7 ~ / #{origin_asn}$/ || $7 == \"#{origin_asn}\"'"
+          "| awk -F'|' '#{ip_filter} && ($7 ~ / #{origin_asn}$/ || $7 == \"#{origin_asn}\")'"
   
         true ->
-          "| fgrep --line-buffered \"|#{prefix}|#{asn}|\""
+          "| fgrep --line-buffered \"|#{prefix}|#{asn}|\" | awk -F'|' '#{ip_filter}'"
       end
-      # bgpdump -m gz > txt 2>&1
-      command =
-        "bgpdump -m \"#{gz_file}\" #{used_filter} > #{temp_file} 2>&1"
+
+      command = "bgpdump -m \"#{gz_file}\" #{used_filter} > #{temp_file} 2>&1"
       
       IO.puts("Processing with command: #{command}")
       
@@ -249,7 +246,7 @@ defmodule TccDepeeringElixir.BViewDownloader do
       case System.cmd(sh_path, ["-c", command], stderr_to_stdout: true) do
         {_output, exit_code} when exit_code in [0, 1] ->
           if exit_code == 1 do
-            IO.puts("bgpdump finished. fgrep returned exit code 1: No matching data found. Creating empty text file.")
+            IO.puts("bgpdump finished. fgrep/awk returned exit code 1: No matching data found. Creating empty text file.")
           else
             IO.puts("bgpdump finished successfully. Matches found.")
           end
@@ -268,5 +265,5 @@ defmodule TccDepeeringElixir.BViewDownloader do
         File.rm(temp_file)
         {:error, "bgpdump execution error: #{inspect(e)}"}
     end
-  end
+  end 
 end 
