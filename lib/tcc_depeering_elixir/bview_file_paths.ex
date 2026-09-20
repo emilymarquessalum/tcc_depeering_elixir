@@ -23,10 +23,10 @@ defmodule TccDepeeringElixir.BViewFilePaths do
     Path.join(collector_dir(rrc), "bview.#{date_str}.#{time_str}.gz")
   end
 
-  def output_txt_file(rrc, prefix, date_input, time_input, origin_asn \\ nil) do
+  def output_txt_file(rrc, prefix, date_input, time_input, origin_asn \\ nil, ip_version \\ "v4") do
     date_str = normalize_date(date_input)
     time_str = normalize_time(time_input)
-    Path.join(output_dir(rrc, prefix), output_txt_filename(date_str, time_str, origin_asn))
+    Path.join(output_dir(rrc, prefix), output_txt_filename(date_str, time_str, origin_asn, ip_version))
   end
 
   def cache_json_file(rrc, ip_version, date_input, time_input, origin_asn \\ nil) do
@@ -39,8 +39,8 @@ defmodule TccDepeeringElixir.BViewFilePaths do
     Path.join([@cache_dir, to_string(rrc), to_string(ip_version)])
   end
 
-  def output_txt_filename(date_str, time_str, origin_asn \\ nil) do
-    "output_bview.#{date_str}.#{time_str}#{origin_suffix(origin_asn)}.txt"
+  def output_txt_filename(date_str, time_str, origin_asn \\ nil, ip_version \\ "v4") do
+    "output_bview.#{date_str}.#{time_str}.#{ip_version}#{origin_suffix(origin_asn)}.txt"
   end
 
   def cache_json_filename(date_str, time_str, origin_asn \\ nil) do
@@ -50,12 +50,12 @@ defmodule TccDepeeringElixir.BViewFilePaths do
   def parse_output_txt_file(file_path_or_name) do
     file_name = Path.basename(file_path_or_name)
 
-    case Regex.run(~r/^output_bview\.(\d{8})\.(\d{4})(?:\.origin_as\.([^\.]+))?\.txt$/, file_name) do
-      [_, date_str, time_str] ->
-        {:ok, %{date_str: date_str, time_str: time_str, origin_asn: nil}}
+    case Regex.run(~r/^output_bview\.(\d{8})\.(\d{4})\.(v4|v6)(?:\.origin_as\.([^\.]+))?\.txt$/, file_name) do
+      [_, date_str, time_str, ip_version] ->
+        {:ok, %{date_str: date_str, time_str: time_str, ip_version: ip_version, origin_asn: nil}}
 
-      [_, date_str, time_str, origin_asn] ->
-        {:ok, %{date_str: date_str, time_str: time_str, origin_asn: origin_asn}}
+      [_, date_str, time_str, ip_version, origin_asn] ->
+        {:ok, %{date_str: date_str, time_str: time_str, ip_version: ip_version, origin_asn: origin_asn}}
 
       _ ->
         {:error, "Invalid output_bview filename format"}

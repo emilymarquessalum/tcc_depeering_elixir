@@ -14,7 +14,8 @@ defmodule TccDepeeringElixir.BViewDownloader do
     folder = TccDepeeringElixir.BViewFilePaths.collector_dir(rrc)
     output_folder = TccDepeeringElixir.BViewFilePaths.output_dir(rrc, prefix)
     # Updated: Pass ip_version to build unique output file path
-    output_file = TccDepeeringElixir.BViewFilePaths.output_txt_file(rrc, prefix, ripe_date, time_str, origin_asn, ip_version)
+
+    output_file = TccDepeeringElixir.BViewFilePaths.output_txt_file(rrc, prefix, ripe_date, time_str, origin_asn, ip_version) 
     
     is_ripe = String.starts_with?(rrc, "rrc")
     local_gz_file = TccDepeeringElixir.BViewFilePaths.gz_file(rrc, ripe_date, time_str)
