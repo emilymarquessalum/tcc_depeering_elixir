@@ -22,6 +22,7 @@ defmodule TccDepeeringElixir.BViewRangeLoader do
   """
   def load_range(start_date, end_date, time_str, opts \\ []) do
     day_delta = Keyword.get(opts, :day_delta, 1) 
+    month_delta = Keyword.get(opts, :month_delta, 0) 
     time_delta = Keyword.get(opts, :time_delta, 0)
     rrc = Keyword.get(opts, :rrc, "")
     asn = Keyword.get(opts, :asn, "")
@@ -36,7 +37,7 @@ defmodule TccDepeeringElixir.BViewRangeLoader do
     if Date.compare(start_date, end_date) == :gt do
       {:error, "start_date must be before end_date"}
     else
-      results = iterate_range(start_date, end_date, day_delta, time_delta, rrc, asn, prefix, origin_asn, concurrency, [], time_str, ip_version)
+      results = iterate_range(start_date, end_date, day_delta, time_delta, month_delta, rrc, asn, prefix, origin_asn, concurrency, [], time_str, ip_version)
       {:ok, results}
     end
   end
@@ -50,10 +51,10 @@ defmodule TccDepeeringElixir.BViewRangeLoader do
 
   defp parse_date(%Date{} = date), do: date
 
-  defp iterate_range(current_date, end_date, day_delta, time_delta, rrc, asn, prefix, origin_asn, concurrency, acc, time_str, ip_version) do
+  defp iterate_range(current_date, end_date, day_delta, time_delta, month_delta, rrc, asn, prefix, origin_asn, concurrency, acc, time_str, ip_version) do
     # If day_delta is 0, only iterate once (time_delta will handle day progression)
     if day_delta == 0 do
-      case fetch_times_for_date_async(current_date, end_date, time_delta, rrc, asn, prefix, origin_asn, concurrency, ip_version) do
+      case fetch_times_for_date_async(current_date, end_date, time_delta, month_delta, rrc, asn, prefix, origin_asn, concurrency, ip_version) do
         {:stop_iteration, day_results} ->
           IO.puts("[iterate_range] Stopping iteration due to empty result")
           Enum.reverse(acc ++ day_results)
@@ -65,7 +66,7 @@ defmodule TccDepeeringElixir.BViewRangeLoader do
       if Date.compare(current_date, end_date) == :gt do
         Enum.reverse(acc)
       else
-        case fetch_times_for_date_async(current_date, current_date, time_delta, rrc, asn, prefix, origin_asn, concurrency, ip_version) do
+        case fetch_times_for_date_async(current_date, current_date, time_delta,month_delta, rrc, asn, prefix, origin_asn, concurrency, ip_version) do
           {:stop_iteration, day_results} ->
             IO.puts("[iterate_range] Stopping iteration due to empty result")
             Enum.reverse(acc ++ day_results)
@@ -73,15 +74,15 @@ defmodule TccDepeeringElixir.BViewRangeLoader do
             acc = acc ++ day_results
             # Move to next date
             next_date = Date.add(current_date, day_delta)
-            iterate_range(next_date, end_date, day_delta, time_delta, rrc, asn, prefix, origin_asn, concurrency, acc, time_str, ip_version)
+            iterate_range(next_date, end_date, day_delta, time_delta, month_delta,rrc, asn, prefix, origin_asn, concurrency, acc, time_str, ip_version)
         end
       end
     end 
   end 
  
-  defp fetch_times_for_date_async(date, limit_date, time_delta, rrc, asn, prefix, origin_asn, concurrency, ip_version) do
+  defp fetch_times_for_date_async(date, limit_date, time_delta, month_delta, rrc, asn, prefix, origin_asn, concurrency, ip_version) do
     hours_with_days =
-      generate_date_hour_pairs(date, limit_date, time_delta)
+      generate_date_hour_pairs(date, limit_date, time_delta, month_delta)
       |> Enum.map(fn {current_date, hour} -> {current_date, hour, rrc, asn, prefix, origin_asn, ip_version} end)
 
     # Separate cached and non-cached items
@@ -172,20 +173,15 @@ defmodule TccDepeeringElixir.BViewRangeLoader do
   end
  
 
-  @doc """
+    @doc """
   Generate all (date, hour) pairs from start_date to end_date with time_delta increments.
-  
-  Handles hour wrapping across days. For example, with time_delta=8:
-  - 0 hours → {start_date, 0}
-  - 8 hours → {start_date, 8}
-  - 16 hours → {start_date, 16}
-  - 24 hours → {start_date + 1 day, 0}
-  - 32 hours → {start_date + 1 day, 8}
-  
+
+  Supports both time_delta (in hours) and month_delta (in months).
+  When month_delta > 0, dates advance by full calendar months while preserving day/hour logic.
   When time_delta=0, returns a single pair {start_date, 0}.
   """
-  def generate_date_hour_pairs(start_date, end_date, time_delta) do
-    # When time_delta is 0, no time increment needed (used with day_delta iteration)
+  def generate_date_hour_pairs(start_date, end_date, time_delta, month_delta \\ 0) do
+    # When time_delta is 0, no time increment needed
     if time_delta == 0 do
       if Date.compare(start_date, end_date) != :gt do
         [{start_date, 0}]
@@ -194,15 +190,20 @@ defmodule TccDepeeringElixir.BViewRangeLoader do
       end
     else
       # Generate all (date, hour) pairs from start_date to end_date
-      # Handles hour wrapping across days
-      Stream.iterate(0, &(&1 + time_delta))
-      |> Stream.map(fn total_hours ->
+      Stream.iterate(0, &(&1 + 1))
+      |> Stream.map(fn step ->
+        total_hours = step * time_delta
         days_passed = div(total_hours, 24)
         hour = rem(total_hours, 24)
-        current_date = Date.add(start_date, days_passed)
+
+        # Shift start_date by month_delta steps first, then add remaining days
+        months_passed = step * month_delta
+        base_date = Date.shift(start_date, month: months_passed)
+        current_date = Date.add(base_date, days_passed)
+
         {current_date, hour}
       end)
-      |> Stream.take_while(fn {current_date, _hour} -> 
+      |> Stream.take_while(fn {current_date, _hour} ->
         Date.compare(current_date, end_date) != :gt
       end)
       |> Enum.to_list()

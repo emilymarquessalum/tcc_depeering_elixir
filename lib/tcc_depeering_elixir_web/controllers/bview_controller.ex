@@ -83,6 +83,7 @@ defmodule TccDepeeringElixirWeb.BViewController do
 
     time_str = Map.get(params, "time_str", "0000")
     time_delta = Map.get(params, "time_delta", "0") |> parse_int(0)
+    month_delta =  Map.get(params, "month_delta", "0") |> parse_int(0)
     ip_version = Map.get(params, "ip_version", "v4") 
     # Check if this is a range query
     result = case {Map.get(params, "start_date"), Map.get(params, "end_date")} do
@@ -93,6 +94,8 @@ defmodule TccDepeeringElixirWeb.BViewController do
       {start_date, end_date} when is_binary(start_date) and is_binary(end_date) ->
         # Range query
         day_delta = Map.get(params, "day_delta", "1") |> parse_int(1)
+        
+        month_delta =  Map.get(params, "month_delta", "0") |> parse_int(0)
         time_delta = Map.get(params, "time_delta", "0") |> parse_int(0)
         
         case TccDepeeringElixir.BViewRangeLoader.load_range(
@@ -101,6 +104,7 @@ defmodule TccDepeeringElixirWeb.BViewController do
                time_str,
                day_delta: day_delta,
                time_delta: time_delta,
+               month_delta: month_delta,
                rrc: rrc,
                asn: asn,
                prefix: prefix,
@@ -116,7 +120,8 @@ defmodule TccDepeeringElixirWeb.BViewController do
                 start_date: start_date,
                 end_date: end_date,
                 day_delta: day_delta,
-                time_delta: time_delta
+                time_delta: time_delta,
+                month_delta: month_delta,
               },
               results: results
             }}
