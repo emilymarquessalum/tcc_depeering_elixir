@@ -180,32 +180,29 @@ defmodule TccDepeeringElixir.BViewRangeLoader do
   When month_delta > 0, dates advance by full calendar months while preserving day/hour logic.
   When time_delta=0, returns a single pair {start_date, 0}.
   """
-  def generate_date_hour_pairs(start_date, end_date, time_delta, month_delta \\ 0) do
-    # When time_delta is 0, no time increment needed
-    if time_delta == 0 do
-      if Date.compare(start_date, end_date) != :gt do
-        [{start_date, 0}]
-      else
-        []
-      end
+  def generate_date_hour_pairs(start_date, end_date, time_delta_hours, month_delta \\ 0) do
+    # Combine date with 00:00:00 to start streaming in time/date dimensions
+    start_dt = NaiveDateTime.new!(start_date, ~T[00:00:00])
+    end_dt = NaiveDateTime.new!(end_date, ~T[23:59:59])
+
+    # Guard against zero increment steps to avoid infinite loops
+    if time_delta_hours == 0 and month_delta == 0 do
+      if Date.compare(start_date, end_date) != :gt, do: [{start_date, 0}], else: []
     else
-      # Generate all (date, hour) pairs from start_date to end_date
-      Stream.iterate(0, &(&1 + 1))
-      |> Stream.map(fn step ->
-        total_hours = step * time_delta
-        days_passed = div(total_hours, 24)
-        hour = rem(total_hours, 24)
+      Stream.iterate({start_dt, 0}, fn {_dt, step} ->
+        next_step = step + 1
+        
+        # Apply monthly shift and hourly offset independently
+        next_dt = 
+          start_date
+          |> Date.shift(month: next_step * month_delta)
+          |> NaiveDateTime.new!(~T[00:00:00])
+          |> NaiveDateTime.add(next_step * time_delta_hours, :hour)
 
-        # Shift start_date by month_delta steps first, then add remaining days
-        months_passed = step * month_delta
-        base_date = Date.shift(start_date, month: months_passed)
-        current_date = Date.add(base_date, days_passed)
-
-        {current_date, hour}
+        {next_dt, next_step}
       end)
-      |> Stream.take_while(fn {current_date, _hour} ->
-        Date.compare(current_date, end_date) != :gt
-      end)
+      |> Stream.map(fn {dt, _step} -> {NaiveDateTime.to_date(dt), dt.hour} end)
+      |> Stream.take_while(fn {date, _hour} -> Date.compare(date, end_date) != :gt end)
       |> Enum.to_list()
     end
   end
